@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Simple Chat</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+  body {
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    background: #0f172a;
+    color: #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  header {
+    padding: 12px 16px;
+    background: #111827;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+  }
+  #pfp {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background-size: cover;
+    background-position: center;
+    cursor: pointer;
+    border: 2px solid #3b82f6;
+  }
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+  }
+  .message {
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    background: #1f2937;
+    border-radius: 6px;
+    display: flex;
+    gap: 10px;
+  }
+  .pfpMsg {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background-size: cover;
+    background-position: center;
+    flex-shrink: 0;
+  }
+  .meta {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e5e7eb;
+  }
+  .timeSmall {
+    font-size: 11px;
+    color: #9ca3af;
+    margin-left: 6px;
+  }
+  .text {
+    font-size: 14px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin-top: 2px;
+  }
+  form {
+    display: flex;
+    padding: 10px 16px;
+    background: #111827;
+    gap: 8px;
+  }
+  input[type="text"] {
+    flex: 1;
+    padding: 8px 10px;
+    border-radius: 4px;
+    border: none;
+    outline: none;
+    font-size: 14px;
+  }
+  button {
+    padding: 8px 14px;
+    border-radius: 4px;
+    border: none;
+    background: #3b82f6;
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  #usernameModal {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #usernameBox {
+    background: #111827;
+    padding: 20px 18px;
+    border-radius: 8px;
+    width: 260px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+  }
+  #usernameBox h2 {
+    margin: 0 0 10px;
+    font-size: 16px;
+  }
+  #usernameBox label {
+    font-size: 12px;
+    color: #9ca3af;
+  }
+  #usernameInput {
+    width: 100%;
+    margin-top: 4px;
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    border: none;
+    outline: none;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Username modal -->
+<div id="usernameModal">
+  <div id="usernameBox">
+    <h2>Enter your username</h2>
+    <label for="usernameInput">Username (max 26 chars)</label>
+    <input id="usernameInput" type="text" maxlength="26" />
+    <button id="saveUsernameBtn">Save</button>
+  </div>
+</div>
+
+<header>
+  <div>Simple Chat</div>
+  <div id="pfp"></div>
+</header>
+
+<main id="messages"></main>
+
+<form id="messageForm">
+  <input id="messageInput" type="text" placeholder="Type a message..." maxlength="1500" autocomplete="off" />
+  <button id="sendBtn" type="submit">Send</button>
+</form>
+
+<script type="module">
+  const firebaseConfig = {
+    apiKey: "AIzaSyCPcprDqf0X1rMOCe3R7GgVCBMXX7-L66U",
+    authDomain: "multiplayerfps-c3b14.firebaseapp.com",
+    databaseURL: "https://multiplayerfps-c3b14-default-rtdb.firebaseio.com",
+    projectId: "multiplayerfps-c3b14",
+    storageBucket: "multiplayerfps-c3b14.firebasestorage.app",
+    messagingSenderId: "77451030161",
+    appId: "1:77451030161:web:fa510ba2bd508e63491930",
+    measurementId: "G-8LRSKGM40R"
+  };
+
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getDatabase,
+    ref,
+    push,
+    onChildAdded
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const messagesRef = ref(db, "messages");
+
+  const usernameModal = document.getElementById("usernameModal");
+  const usernameInput = document.getElementById("usernameInput");
+  const saveUsernameBtn = document.getElementById("saveUsernameBtn");
+
+  const messagesEl = document.getElementById("messages");
+  const messageForm = document.getElementById("messageForm");
+  const messageInput = document.getElementById("messageInput");
+  const sendBtn = document.getElementById("sendBtn");
+
+  const pfpEl = document.getElementById("pfp");
+
+  let username = null;
+  let cooldown = false;
+
+  // Default PFP
+  const defaultPfp = "https://i.imgur.com/4ZQZ4ZQ.png"; // replace if you want
+  let pfp = localStorage.getItem("chat_pfp") || defaultPfp;
+
+  pfpEl.style.backgroundImage = `url('${pfp}')`;
+
+  // Ask for notifications
+  if (Notification.permission !== "granted") {
+    Notification.requestPermission();
+  }
+
+  // Load username
+  function loadUsername() {
+    const stored = localStorage.getItem("chat_username");
+    if (stored && stored.trim() !== "") {
+      username = stored;
+      usernameModal.style.display = "none";
+    } else {
+      usernameModal.style.display = "flex";
+    }
+  }
+
+  saveUsernameBtn.addEventListener("click", () => {
+    const value = usernameInput.value.trim();
+    if (!value) return;
+    username = value.slice(0, 26);
+    localStorage.setItem("chat_username", username);
+    usernameModal.style.display = "none";
+  });
+
+  usernameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") saveUsernameBtn.click();
+  });
+
+  loadUsername();
+
+  // Upload PFP
+  pfpEl.addEventListener("click", () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+
+    input.onchange = () => {
+      const file = input.files[0];
+      const reader = new FileReader();
+      reader.onload = () => {
+        pfp = reader.result;
+        localStorage.setItem("chat_pfp", pfp);
+        pfpEl.style.backgroundImage = `url('${pfp}')`;
+      };
+      reader.readAsDataURL(file);
+    };
+
+    input.click();
+  });
+
+  // Listen for messages
+  onChildAdded(messagesRef, (snapshot) => {
+    const data = snapshot.val();
+
+    const msgEl = document.createElement("div");
+    msgEl.className = "message";
+
+    const pfpMsg = document.createElement("div");
+    pfpMsg.className = "pfpMsg";
+    pfpMsg.style.backgroundImage = `url('${data.pfp || defaultPfp}')`;
+
+    const content = document.createElement("div");
+
+    const time = new Date(data.timestamp || Date.now());
+    const timeStr = time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    const metaEl = document.createElement("div");
+    metaEl.className = "meta";
+    metaEl.innerHTML = `${data.username}<span class="timeSmall">${timeStr}</span>`;
+
+    const textEl = document.createElement("div");
+    textEl.className = "text";
+    textEl.textContent = data.text;
+
+    content.appendChild(metaEl);
+    content.appendChild(textEl);
+
+    msgEl.appendChild(pfpMsg);
+    msgEl.appendChild(content);
+
+    messagesEl.appendChild(msgEl);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    // Notification
+    if (data.username !== username && Notification.permission === "granted") {
+      new Notification(`${data.username}`, {
+        body: data.text
+      });
+    }
+  });
+
+  // Send message
+  messageForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (cooldown) return;
+
+    const text = messageInput.value.trim();
+    if (!text || !username) return;
+
+    cooldown = true;
+    sendBtn.disabled = true;
+
+    setTimeout(() => {
+      cooldown = false;
+      sendBtn.disabled = false;
+    }, 1000);
+
+    messageInput.value = "";
+    messageInput.focus();
+
+    push(messagesRef, {
+      username,
+      text,
+      pfp,
+      timestamp: Date.now()
+    });
+  });
+</script>
+
+</body>
+</html>
