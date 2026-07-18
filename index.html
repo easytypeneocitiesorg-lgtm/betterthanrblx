@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>chat</title>
+<title>Simple Chat</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <style>
   body {
@@ -143,7 +143,7 @@
 </div>
 
 <header>
-  <div>unlike roblox this chat doenst have a filter that tags things that dont need to be</div>
+  <div>Simple Chat</div>
   <div id="pfp"></div>
 </header>
 
@@ -151,6 +151,8 @@
 
 <form id="messageForm">
   <input id="messageInput" type="text" placeholder="Type a message..." maxlength="1500" autocomplete="off" />
+  <input id="fileInput" type="file" style="display:none" />
+  <button id="uploadBtn" type="button">📎</button>
   <button id="sendBtn" type="submit">Send</button>
 </form>
 
@@ -173,10 +175,17 @@
     push,
     onChildAdded
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+  import {
+    getStorage,
+    ref as storageRef,
+    uploadBytes,
+    getDownloadURL
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
   const messagesRef = ref(db, "messages");
+  const storage = getStorage(app);
 
   const usernameModal = document.getElementById("usernameModal");
   const usernameInput = document.getElementById("usernameInput");
@@ -186,24 +195,22 @@
   const messageForm = document.getElementById("messageForm");
   const messageInput = document.getElementById("messageInput");
   const sendBtn = document.getElementById("sendBtn");
+  const uploadBtn = document.getElementById("uploadBtn");
+  const fileInput = document.getElementById("fileInput");
 
   const pfpEl = document.getElementById("pfp");
 
   let username = null;
   let cooldown = false;
 
-  // Default PFP
-  const defaultPfp = "https://i.imgur.com/4ZQZ4ZQ.png"; // replace if you want
+  const defaultPfp = "https://i.imgur.com/4ZQZ4ZQ.png"; // change if you want
   let pfp = localStorage.getItem("chat_pfp") || defaultPfp;
-
   pfpEl.style.backgroundImage = `url('${pfp}')`;
 
-  // Ask for notifications
   if (Notification.permission !== "granted") {
     Notification.requestPermission();
   }
 
-  // Load username
   function loadUsername() {
     const stored = localStorage.getItem("chat_username");
     if (stored && stored.trim() !== "") {
@@ -228,7 +235,6 @@
 
   loadUsername();
 
-  // Upload PFP
   pfpEl.addEventListener("click", () => {
     const input = document.createElement("input");
     input.type = "file";
@@ -236,6 +242,7 @@
 
     input.onchange = () => {
       const file = input.files[0];
+      if (!file) return;
       const reader = new FileReader();
       reader.onload = () => {
         pfp = reader.result;
@@ -248,7 +255,6 @@
     input.click();
   });
 
-  // Listen for messages
   onChildAdded(messagesRef, (snapshot) => {
     const data = snapshot.val();
 
@@ -268,12 +274,32 @@
     metaEl.className = "meta";
     metaEl.innerHTML = `${data.username}<span class="timeSmall">${timeStr}</span>`;
 
-    const textEl = document.createElement("div");
-    textEl.className = "text";
-    textEl.textContent = data.text;
-
     content.appendChild(metaEl);
-    content.appendChild(textEl);
+
+    if (data.fileUrl) {
+      const type = data.fileType || "";
+      if (type.startsWith("image/")) {
+        const img = document.createElement("img");
+        img.src = data.fileUrl;
+        img.style.maxWidth = "300px";
+        img.style.borderRadius = "6px";
+        img.style.marginTop = "6px";
+        content.appendChild(img);
+      } else {
+        const link = document.createElement("a");
+        link.href = data.fileUrl;
+        link.textContent = `📄 ${data.fileName}`;
+        link.style.color = "#93c5fd";
+        link.style.textDecoration = "none";
+        link.target = "_blank";
+        content.appendChild(link);
+      }
+    } else {
+      const textEl = document.createElement("div");
+      textEl.className = "text";
+      textEl.textContent = data.text;
+      content.appendChild(textEl);
+    }
 
     msgEl.appendChild(pfpMsg);
     msgEl.appendChild(content);
@@ -281,15 +307,18 @@
     messagesEl.appendChild(msgEl);
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
-    // Notification
     if (data.username !== username && Notification.permission === "granted") {
-      new Notification(`${data.username}`, {
-        body: data.text
-      });
+      const type = data.fileType || "";
+      let body = data.text || "";
+      if (data.fileUrl) {
+        body = type.startsWith("image/")
+          ? "Sent an image"
+          : `Sent a file: ${data.fileName}`;
+      }
+      new Notification(`${data.username}`, { body });
     }
   });
 
-  // Send message
   messageForm.addEventListener("submit", (e) => {
     e.preventDefault();
     if (cooldown) return;
@@ -299,7 +328,6 @@
 
     cooldown = true;
     sendBtn.disabled = true;
-
     setTimeout(() => {
       cooldown = false;
       sendBtn.disabled = false;
@@ -314,6 +342,44 @@
       pfp,
       timestamp: Date.now()
     });
+  });
+
+  uploadBtn.addEventListener("click", () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    if (!file || !username) return;
+
+    if (cooldown) return;
+    cooldown = true;
+    sendBtn.disabled = true;
+    setTimeout(() => {
+      cooldown = false;
+      sendBtn.disabled = false;
+    }, 1000);
+
+    const filePath = `uploads/${Date.now()}_${file.name}`;
+    const fileRef = storageRef(storage, filePath);
+
+    try {
+      await uploadBytes(fileRef, file);
+      const url = await getDownloadURL(fileRef);
+
+      push(messagesRef, {
+        username,
+        pfp,
+        fileName: file.name,
+        fileUrl: url,
+        fileType: file.type,
+        timestamp: Date.now()
+      });
+    } catch (err) {
+      console.error("Upload failed:", err);
+    }
+
+    fileInput.value = "";
   });
 </script>
 
