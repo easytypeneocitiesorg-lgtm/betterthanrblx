@@ -184,17 +184,10 @@
     push,
     onChildAdded
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
-  import {
-    getStorage,
-    ref as storageRef,
-    uploadBytes,
-    getDownloadURL
-  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
   const messagesRef = ref(db, "messages");
-  const storage = getStorage(app);
 
   const usernameModal = document.getElementById("usernameModal");
   const usernameInput = document.getElementById("usernameInput");
@@ -291,22 +284,23 @@
 
     content.appendChild(metaEl);
 
-    if (data.fileUrl) {
+    if (data.fileBase64) {
       const type = data.fileType || "";
+
       if (type.startsWith("image/")) {
         const img = document.createElement("img");
-        img.src = data.fileUrl;
+        img.src = data.fileBase64;
         img.style.maxWidth = "300px";
         img.style.borderRadius = "6px";
         img.style.marginTop = "6px";
         content.appendChild(img);
       } else {
         const link = document.createElement("a");
-        link.href = data.fileUrl;
+        link.href = data.fileBase64;
+        link.download = data.fileName;
         link.textContent = `📄 ${data.fileName}`;
         link.style.color = "#93c5fd";
         link.style.textDecoration = "none";
-        link.target = "_blank";
         content.appendChild(link);
       }
     } else {
@@ -323,10 +317,9 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
     if (data.username !== username && Notification.permission === "granted") {
-      const type = data.fileType || "";
       let body = data.text || "";
-      if (data.fileUrl) {
-        body = type.startsWith("image/")
+      if (data.fileBase64) {
+        body = data.fileType.startsWith("image/")
           ? "Sent an image"
           : `Sent a file: ${data.fileName}`;
       }
@@ -363,9 +356,15 @@
     fileInput.click();
   });
 
-  fileInput.addEventListener("change", async () => {
+  fileInput.addEventListener("change", () => {
     const file = fileInput.files[0];
     if (!file || !username) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert("File too large! Max size is 5 MB.");
+      fileInput.value = "";
+      return;
+    }
 
     if (cooldown) return;
     cooldown = true;
@@ -375,24 +374,20 @@
       sendBtn.disabled = false;
     }, 1000);
 
-    const filePath = `uploads/${Date.now()}_${file.name}`;
-    const fileRef = storageRef(storage, filePath);
-
-    try {
-      await uploadBytes(fileRef, file);
-      const url = await getDownloadURL(fileRef);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result;
 
       push(messagesRef, {
         username,
         pfp,
         fileName: file.name,
-        fileUrl: url,
         fileType: file.type,
+        fileBase64: base64,
         timestamp: Date.now()
       });
-    } catch (err) {
-      console.error("Upload failed:", err);
-    }
+    };
+    reader.readAsDataURL(file);
 
     fileInput.value = "";
   });
