@@ -26,7 +26,6 @@
   #changeUsernameBtn {
     cursor: pointer;
     color: #93c5fd;
-    font-size: 14px;
   }
   #changeUsernameBtn:hover {
     text-decoration: underline;
@@ -71,16 +70,41 @@
     color: #9ca3af;
     margin-left: 6px;
   }
-  .text {
-    font-size: 14px;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    margin-top: 2px;
+  .replyPreview {
+    background: #1f2937;
+    padding: 6px 10px;
+    border-left: 3px solid #3b82f6;
+    margin-bottom: 6px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .replyText {
+    font-size: 13px;
+    color: #9ca3af;
+  }
+  .replyBtn {
+    font-size: 12px;
+    color: #93c5fd;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .replyBtn:hover {
+    text-decoration: underline;
   }
   form {
     display: flex;
+    flex-direction: column;
     padding: 10px 16px;
     background: #111827;
+    gap: 8px;
+  }
+  #typingIndicator {
+    font-size: 12px;
+    color: #9ca3af;
+    height: 14px;
+  }
+  .inputRow {
+    display: flex;
     gap: 8px;
   }
   input[type="text"] {
@@ -159,10 +183,15 @@
 <main id="messages"></main>
 
 <form id="messageForm">
-  <input id="messageInput" type="text" placeholder="Type a message..." maxlength="1500" autocomplete="off" />
-  <input id="fileInput" type="file" style="display:none" />
-  <button id="uploadBtn" type="button">📎</button>
-  <button id="sendBtn" type="submit">Send</button>
+  <div id="replyContainer"></div>
+  <div id="typingIndicator"></div>
+
+  <div class="inputRow">
+    <input id="messageInput" type="text" placeholder="Type a message..." maxlength="1500" autocomplete="off" />
+    <input id="fileInput" type="file" style="display:none" />
+    <button id="uploadBtn" type="button">📎</button>
+    <button id="sendBtn" type="submit">Send</button>
+  </div>
 </form>
 
 <script type="module">
@@ -182,12 +211,15 @@
     getDatabase,
     ref,
     push,
-    onChildAdded
+    onChildAdded,
+    set,
+    onValue
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
   const messagesRef = ref(db, "messages");
+  const typingRef = ref(db, "typing");
 
   const usernameModal = document.getElementById("usernameModal");
   const usernameInput = document.getElementById("usernameInput");
@@ -202,10 +234,15 @@
   const uploadBtn = document.getElementById("uploadBtn");
   const fileInput = document.getElementById("fileInput");
 
+  const typingIndicator = document.getElementById("typingIndicator");
+  const replyContainer = document.getElementById("replyContainer");
+
   const pfpEl = document.getElementById("pfp");
 
   let username = null;
   let cooldown = false;
+  let typingTimeout = null;
+  let replyTo = null;
 
   const defaultPfp = "https://i.imgur.com/4ZQZ4ZQ.png";
   let pfp = localStorage.getItem("chat_pfp") || defaultPfp;
@@ -263,6 +300,42 @@
     input.click();
   });
 
+  // Typing indicator
+  messageInput.addEventListener("input", () => {
+    set(ref(db, "typing/" + username), true);
+
+    clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+      set(ref(db, "typing/" + username), false);
+    }, 1000);
+  });
+
+  onValue(typingRef, (snapshot) => {
+    const typingUsers = snapshot.val() || {};
+    const active = Object.keys(typingUsers).filter(u => typingUsers[u] && u !== username);
+
+    typingIndicator.textContent = active.length > 0
+      ? active.join(", ") + " is typing..."
+      : "";
+  });
+
+  // Reply system
+  function showReplyPreview(user, text) {
+    replyTo = { user, text };
+
+    replyContainer.innerHTML = `
+      <div class="replyPreview">
+        Replying to <b>${user}</b><br>
+        <span class="replyText">> ${text}</span>
+      </div>
+    `;
+  }
+
+  function clearReplyPreview() {
+    replyTo = null;
+    replyContainer.innerHTML = "";
+  }
+
   onChildAdded(messagesRef, (snapshot) => {
     const data = snapshot.val();
 
@@ -284,6 +357,18 @@
 
     content.appendChild(metaEl);
 
+    // Reply display
+    if (data.replyUser && data.replyText) {
+      const replyBox = document.createElement("div");
+      replyBox.className = "replyPreview";
+      replyBox.innerHTML = `
+        Replying to <b>${data.replyUser}</b><br>
+        <span class="replyText">> ${data.replyText}</span>
+      `;
+      content.appendChild(replyBox);
+    }
+
+    // File display
     if (data.fileBase64) {
       const type = data.fileType || "";
 
@@ -294,6 +379,23 @@
         img.style.borderRadius = "6px";
         img.style.marginTop = "6px";
         content.appendChild(img);
+
+      } else if (type.startsWith("video/")) {
+        const vid = document.createElement("video");
+        vid.src = data.fileBase64;
+        vid.controls = true;
+        vid.style.maxWidth = "300px";
+        vid.style.borderRadius = "6px";
+        vid.style.marginTop = "6px";
+        content.appendChild(vid);
+
+      } else if (type.startsWith("audio/")) {
+        const aud = document.createElement("audio");
+        aud.src = data.fileBase64;
+        aud.controls = true;
+        aud.style.marginTop = "6px";
+        content.appendChild(aud);
+
       } else {
         const link = document.createElement("a");
         link.href = data.fileBase64;
@@ -303,12 +405,22 @@
         link.style.textDecoration = "none";
         content.appendChild(link);
       }
+
     } else {
       const textEl = document.createElement("div");
       textEl.className = "text";
       textEl.textContent = data.text;
       content.appendChild(textEl);
     }
+
+    // Reply button
+    const replyBtn = document.createElement("div");
+    replyBtn.className = "replyBtn";
+    replyBtn.textContent = "Reply";
+    replyBtn.onclick = () => {
+      showReplyPreview(data.username, data.text || data.fileName || "");
+    };
+    content.appendChild(replyBtn);
 
     msgEl.appendChild(pfpMsg);
     msgEl.appendChild(content);
@@ -321,6 +433,10 @@
       if (data.fileBase64) {
         body = data.fileType.startsWith("image/")
           ? "Sent an image"
+          : data.fileType.startsWith("video/")
+          ? "Sent a video"
+          : data.fileType.startsWith("audio/")
+          ? "Sent an audio file"
           : `Sent a file: ${data.fileName}`;
       }
       new Notification(`${data.username}`, { body });
@@ -332,7 +448,7 @@
     if (cooldown) return;
 
     const text = messageInput.value.trim();
-    if (!text || !username) return;
+    if (!text && !replyTo) return;
 
     cooldown = true;
     sendBtn.disabled = true;
@@ -341,15 +457,18 @@
       sendBtn.disabled = false;
     }, 1000);
 
-    messageInput.value = "";
-    messageInput.focus();
-
     push(messagesRef, {
       username,
       text,
       pfp,
+      replyUser: replyTo?.user || null,
+      replyText: replyTo?.text || null,
       timestamp: Date.now()
     });
+
+    messageInput.value = "";
+    clearReplyPreview();
+    messageInput.focus();
   });
 
   uploadBtn.addEventListener("click", () => {
@@ -384,8 +503,12 @@
         fileName: file.name,
         fileType: file.type,
         fileBase64: base64,
+        replyUser: replyTo?.user || null,
+        replyText: replyTo?.text || null,
         timestamp: Date.now()
       });
+
+      clearReplyPreview();
     };
     reader.readAsDataURL(file);
 
