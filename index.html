@@ -14,20 +14,6 @@
     flex-direction: column;
     height: 100vh;
   }
-  #adminTriggerBtn {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 20px;
-    height: 20px;
-    background-color: #3b82f6;
-    cursor: pointer;
-    z-index: 9999;
-    opacity: 0.8;
-  }
-  #adminTriggerBtn:hover {
-    opacity: 1;
-  }
   header {
     padding: 12px 16px;
     background: #111827;
@@ -36,7 +22,6 @@
     align-items: center;
     gap: 12px;
     font-size: 14px;
-    padding-left: 32px;
   }
   #changeUsernameBtn {
     cursor: pointer;
@@ -97,20 +82,13 @@
     font-size: 13px;
     color: #9ca3af;
   }
-  .action-row {
-    display: flex;
-    gap: 12px;
-    margin-top: 4px;
-  }
-  .replyBtn, .adminBtn {
+  .replyBtn {
     font-size: 12px;
     color: #93c5fd;
     cursor: pointer;
+    margin-top: 4px;
   }
-  .adminBtn {
-    color: #ef4444;
-  }
-  .replyBtn:hover, .adminBtn:hover {
+  .replyBtn:hover {
     text-decoration: underline;
   }
   form {
@@ -187,8 +165,7 @@
 </head>
 <body>
 
-<div id="adminTriggerBtn" title="Admin Portal"></div>
-
+<!-- Username modal -->
 <div id="usernameModal">
   <div id="usernameBox">
     <h2>Enter your username</h2>
@@ -235,33 +212,37 @@
     ref,
     push,
     onChildAdded,
-    onChildChanged,
-    onChildRemoved,
     set,
-    update,
-    remove,
-    onValue,
-    get
+    onValue
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
   const messagesRef = ref(db, "messages");
   const typingRef = ref(db, "typing");
-  const usersRef = ref(db, "users");
 
-  // Handle local persistent identification
-  let userId = localStorage.getItem("chat_userid");
-  if (!userId) {
-    userId = "usr_" + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
-    localStorage.setItem("chat_userid", userId);
-  }
+  const usernameModal = document.getElementById("usernameModal");
+  const usernameInput = document.getElementById("usernameInput");
+  const saveUsernameBtn = document.getElementById("saveUsernameBtn");
+
+  const changeUsernameBtn = document.getElementById("changeUsernameBtn");
+
+  const messagesEl = document.getElementById("messages");
+  const messageForm = document.getElementById("messageForm");
+  const messageInput = document.getElementById("messageInput");
+  const sendBtn = document.getElementById("sendBtn");
+  const uploadBtn = document.getElementById("uploadBtn");
+  const fileInput = document.getElementById("fileInput");
+
+  const typingIndicator = document.getElementById("typingIndicator");
+  const replyContainer = document.getElementById("replyContainer");
+
+  const pfpEl = document.getElementById("pfp");
 
   let username = null;
   let cooldown = false;
   let typingTimeout = null;
   let replyTo = null;
-  let isAdmin = false;
 
   const defaultPfp = "https://i.imgur.com/4ZQZ4ZQ.png";
   let pfp = localStorage.getItem("chat_pfp") || defaultPfp;
@@ -271,119 +252,11 @@
     Notification.requestPermission();
   }
 
-  // State memories
-  let messageSnapshots = {};
-  let userProfiles = {};
-
-  // --- Dynamic Live Profile Sync ---
-  // Listens globally to all user changes. When an admin updates a user, it automatically updates everywhere.
-  onValue(usersRef, (snapshot) => {
-    userProfiles = snapshot.val() || {};
-    
-    // Sync current client profile if it was targeted by an admin override
-    if (userProfiles[userId]) {
-      if (userProfiles[userId].username) {
-        username = userProfiles[userId].username;
-        localStorage.setItem("chat_username", username);
-      }
-      if (userProfiles[userId].pfp) {
-        pfp = userProfiles[userId].pfp;
-        localStorage.setItem("chat_pfp", pfp);
-        pfpEl.style.backgroundImage = `url('${pfp}')`;
-      }
-    }
-    // Re-render UI elements cleanly using updated data coordinates
-    renderAllMessages();
-  });
-
-  // --- Secure Single-Use Admin Verification Locks ---
-  async function checkAdminStatusOnLoad() {
-    const savedCode = localStorage.getItem("admin_code");
-    if (!savedCode) return;
-
-    try {
-      const response = await fetch("admincodes.txt");
-      if (!response.ok) throw new Error("Could not check codes file");
-      const text = await response.text();
-      const validCodes = text.split(/\r?\n/).map(c => c.trim()).filter(Boolean);
-
-      if (validCodes.includes(savedCode)) {
-        // Sanitize string characters for deep directory calls safely
-        const safePathCode = btoa(savedCode).replace(/=/g, "");
-        const dbCheck = await get(ref(db, `used_codes/${safePathCode}`));
-        
-        if (dbCheck.exists() && dbCheck.val().claimedBy === userId) {
-          isAdmin = true;
-          renderAllMessages();
-          return;
-        }
-      }
-      
-      localStorage.removeItem("admin_code");
-      isAdmin = false;
-      alert("Your admin code has been deleted either because your powers have been revoked or because of an error. If you believe this is an error please contact the owner at https://discord.gg/wZNGASwP3Y");
-      renderAllMessages();
-    } catch (err) {
-      console.error("Verification verification issue:", err);
-    }
-  }
-
-  adminTriggerBtn.addEventListener("click", async () => {
-    const codeInput = prompt("Enter Admin Code:");
-    if (!codeInput) return;
-    const sanitizedCode = codeInput.trim();
-
-    try {
-      const response = await fetch("admincodes.txt");
-      if (!response.ok) {
-        alert("Error loading verification file.");
-        return;
-      }
-      const text = await response.text();
-      const validCodes = text.split(/\r?\n/).map(c => c.trim()).filter(Boolean);
-
-      if (validCodes.includes(sanitizedCode)) {
-        // Convert the code to a safe database key string to handle special characters cleanly
-        const safePathCode = btoa(sanitizedCode).replace(/=/g, "");
-        const codeRef = ref(db, `used_codes/${safePathCode}`);
-        const snapshot = await get(codeRef);
-
-        if (snapshot.exists()) {
-          const binding = snapshot.val();
-          if (binding.claimedBy !== userId) {
-            alert("This code has already been used by another user.");
-            return;
-          }
-        } else {
-          // Permanently assign and bind this code item context to this specific User ID structure
-          await set(codeRef, { claimedBy: userId });
-        }
-
-        localStorage.setItem("admin_code", sanitizedCode);
-        isAdmin = true;
-        alert("Admin status unlocked successfully!");
-        renderAllMessages();
-      } else {
-        alert("Invalid admin code.");
-      }
-    } catch (err) {
-      alert("Verification system failed connection.");
-    }
-  });
-
-  function renderAllMessages() {
-    messagesEl.innerHTML = "";
-    Object.keys(messageSnapshots).forEach(key => {
-      displayMessage(key, messageSnapshots[key]);
-    });
-  }
-
   function loadUsername() {
     const stored = localStorage.getItem("chat_username");
     if (stored && stored.trim() !== "") {
       username = stored;
       usernameModal.style.display = "none";
-      update(ref(db, `users/${userId}`), { username, pfp });
     } else {
       usernameModal.style.display = "flex";
     }
@@ -394,7 +267,6 @@
     if (!value) return;
     username = value.slice(0, 26);
     localStorage.setItem("chat_username", username);
-    update(ref(db, `users/${userId}`), { username });
     usernameModal.style.display = "none";
   });
 
@@ -403,7 +275,6 @@
   });
 
   loadUsername();
-  checkAdminStatusOnLoad();
 
   changeUsernameBtn.addEventListener("click", () => {
     usernameModal.style.display = "flex";
@@ -422,7 +293,6 @@
         pfp = reader.result;
         localStorage.setItem("chat_pfp", pfp);
         pfpEl.style.backgroundImage = `url('${pfp}')`;
-        update(ref(db, `users/${userId}`), { pfp });
       };
       reader.readAsDataURL(file);
     };
@@ -430,22 +300,29 @@
     input.click();
   });
 
+  // Typing indicator
   messageInput.addEventListener("input", () => {
-    if (username) set(ref(db, "typing/" + username), true);
+    set(ref(db, "typing/" + username), true);
+
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => {
-      if (username) set(ref(db, "typing/" + username), false);
+      set(ref(db, "typing/" + username), false);
     }, 1000);
   });
 
   onValue(typingRef, (snapshot) => {
     const typingUsers = snapshot.val() || {};
     const active = Object.keys(typingUsers).filter(u => typingUsers[u] && u !== username);
-    typingIndicator.textContent = active.length > 0 ? active.join(", ") + " is typing..." : "";
+
+    typingIndicator.textContent = active.length > 0
+      ? active.join(", ") + " is typing..."
+      : "";
   });
 
+  // Reply system
   function showReplyPreview(user, text) {
     replyTo = { user, text };
+
     replyContainer.innerHTML = `
       <div class="replyPreview">
         Replying to <b>${user}</b><br>
@@ -459,27 +336,28 @@
     replyContainer.innerHTML = "";
   }
 
-  function displayMessage(key, data) {
+  onChildAdded(messagesRef, (snapshot) => {
+    const data = snapshot.val();
+
     const msgEl = document.createElement("div");
     msgEl.className = "message";
-    msgEl.setAttribute("data-key", key);
-
-    // DYNAMIC MATCHING: Always pull current display information directly from our live profiles mapping directory
-    const currentProfile = userProfiles[data.userId] || { username: data.username, pfp: data.pfp };
 
     const pfpMsg = document.createElement("div");
     pfpMsg.className = "pfpMsg";
-    pfpMsg.style.backgroundImage = `url('${currentProfile.pfp || defaultPfp}')`;
+    pfpMsg.style.backgroundImage = `url('${data.pfp || defaultPfp}')`;
 
     const content = document.createElement("div");
+
     const time = new Date(data.timestamp || Date.now());
     const timeStr = time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
     const metaEl = document.createElement("div");
     metaEl.className = "meta";
-    metaEl.innerHTML = `${currentProfile.username}<span class="timeSmall">${timeStr}</span>`;
+    metaEl.innerHTML = `${data.username}<span class="timeSmall">${timeStr}</span>`;
+
     content.appendChild(metaEl);
 
+    // Reply display
     if (data.replyUser && data.replyText) {
       const replyBox = document.createElement("div");
       replyBox.className = "replyPreview";
@@ -490,8 +368,10 @@
       content.appendChild(replyBox);
     }
 
+    // File display
     if (data.fileBase64) {
       const type = data.fileType || "";
+
       if (type.startsWith("image/")) {
         const img = document.createElement("img");
         img.src = data.fileBase64;
@@ -499,6 +379,7 @@
         img.style.borderRadius = "6px";
         img.style.marginTop = "6px";
         content.appendChild(img);
+
       } else if (type.startsWith("video/")) {
         const vid = document.createElement("video");
         vid.src = data.fileBase64;
@@ -507,12 +388,14 @@
         vid.style.borderRadius = "6px";
         vid.style.marginTop = "6px";
         content.appendChild(vid);
+
       } else if (type.startsWith("audio/")) {
         const aud = document.createElement("audio");
         aud.src = data.fileBase64;
         aud.controls = true;
         aud.style.marginTop = "6px";
         content.appendChild(aud);
+
       } else {
         const link = document.createElement("a");
         link.href = data.fileBase64;
@@ -522,6 +405,7 @@
         link.style.textDecoration = "none";
         content.appendChild(link);
       }
+
     } else {
       const textEl = document.createElement("div");
       textEl.className = "text";
@@ -529,83 +413,34 @@
       content.appendChild(textEl);
     }
 
-    const actionRow = document.createElement("div");
-    actionRow.className = "action-row";
-
+    // Reply button
     const replyBtn = document.createElement("div");
     replyBtn.className = "replyBtn";
     replyBtn.textContent = "Reply";
     replyBtn.onclick = () => {
-      showReplyPreview(currentProfile.username, data.text || data.fileName || "");
+      showReplyPreview(data.username, data.text || data.fileName || "");
     };
-    actionRow.appendChild(replyBtn);
+    content.appendChild(replyBtn);
 
-    if (isAdmin) {
-      const targetUserId = data.userId;
-
-      const resetPfpBtn = document.createElement("div");
-      resetPfpBtn.className = "adminBtn";
-      resetPfpBtn.textContent = "Reset PFP";
-      resetPfpBtn.onclick = () => {
-        if (targetUserId) {
-          update(ref(db, `users/${targetUserId}`), { pfp: defaultPfp });
-        }
-      };
-
-      const resetUserBtn = document.createElement("div");
-      resetUserBtn.className = "adminBtn";
-      resetUserBtn.textContent = "Reset Username";
-      resetUserBtn.onclick = () => {
-        if (targetUserId) {
-          update(ref(db, `users/${targetUserId}`), { username: "username_deleted" });
-        }
-      };
-
-      const deleteBtn = document.createElement("div");
-      deleteBtn.className = "adminBtn";
-      deleteBtn.textContent = "Delete";
-      deleteBtn.onclick = () => {
-        remove(ref(db, `messages/${key}`));
-      };
-
-      actionRow.appendChild(resetPfpBtn);
-      actionRow.appendChild(resetUserBtn);
-      actionRow.appendChild(deleteBtn);
-    }
-
-    content.appendChild(actionRow);
     msgEl.appendChild(pfpMsg);
     msgEl.appendChild(content);
+
     messagesEl.appendChild(msgEl);
     messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
 
-  onChildAdded(messagesRef, (snapshot) => {
-    const data = snapshot.val();
-    const key = snapshot.key;
-    messageSnapshots[key] = data;
-    displayMessage(key, data);
-
-    const currentProfile = userProfiles[data.userId] || { username: data.username };
     if (data.username !== username && Notification.permission === "granted") {
       let body = data.text || "";
       if (data.fileBase64) {
-        body = data.fileType.startsWith("image/") ? "Sent an image" : data.fileType.startsWith("video/") ? "Sent a video" : data.fileType.startsWith("audio/") ? "Sent an audio file" : `Sent a file: ${data.fileName}`;
+        body = data.fileType.startsWith("image/")
+          ? "Sent an image"
+          : data.fileType.startsWith("video/")
+          ? "Sent a video"
+          : data.fileType.startsWith("audio/")
+          ? "Sent an audio file"
+          : `Sent a file: ${data.fileName}`;
       }
-      new Notification(`${currentProfile.username}`, { body });
+      new Notification(`${data.username}`, { body });
     }
-  });
-
-  onChildChanged(messagesRef, (snapshot) => {
-    const key = snapshot.key;
-    messageSnapshots[key] = snapshot.val();
-    renderAllMessages();
-  });
-
-  onChildRemoved(messagesRef, (snapshot) => {
-    const key = snapshot.key;
-    delete messageSnapshots[key];
-    renderAllMessages();
   });
 
   messageForm.addEventListener("submit", (e) => {
@@ -623,7 +458,6 @@
     }, 1000);
 
     push(messagesRef, {
-      userId,
       username,
       text,
       pfp,
@@ -664,7 +498,6 @@
       const base64 = reader.result;
 
       push(messagesRef, {
-        userId,
         username,
         pfp,
         fileName: file.name,
@@ -678,6 +511,7 @@
       clearReplyPreview();
     };
     reader.readAsDataURL(file);
+
     fileInput.value = "";
   });
 </script>
