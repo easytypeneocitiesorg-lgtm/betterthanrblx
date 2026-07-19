@@ -14,6 +14,21 @@
     flex-direction: column;
     height: 100vh;
   }
+  /* Plain blue square button in the top left corner */
+  #adminTriggerBtn {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 20px;
+    height: 20px;
+    background-color: #3b82f6;
+    cursor: pointer;
+    z-index: 9999;
+    opacity: 0.8;
+  }
+  #adminTriggerBtn:hover {
+    opacity: 1;
+  }
   header {
     padding: 12px 16px;
     background: #111827;
@@ -22,6 +37,7 @@
     align-items: center;
     gap: 12px;
     font-size: 14px;
+    padding-left: 32px; /* Add padding so it doesn't overlap header elements */
   }
   #changeUsernameBtn {
     cursor: pointer;
@@ -172,6 +188,9 @@
 </head>
 <body>
 
+<!-- Hidden/Plain Admin trigger button -->
+<div id="adminTriggerBtn" title="Admin Portal"></div>
+
 <!-- Username modal -->
 <div id="usernameModal">
   <div id="usernameBox">
@@ -249,6 +268,7 @@
   const replyContainer = document.getElementById("replyContainer");
 
   const pfpEl = document.getElementById("pfp");
+  const adminTriggerBtn = document.getElementById("adminTriggerBtn");
 
   let username = null;
   let cooldown = false;
@@ -278,7 +298,6 @@
 
       if (validCodes.includes(savedCode)) {
         isAdmin = true;
-        // Re-render messages to show admin panels if verified
         renderAllMessages();
       } else {
         localStorage.removeItem("admin_code");
@@ -291,36 +310,33 @@
     }
   }
 
-  window.addEventListener("keydown", async (e) => {
-    if (e.altKey && e.shiftKey && e.key === "1") {
-      e.preventDefault();
-      const codeInput = prompt("Enter Admin Code:");
-      if (!codeInput) return;
+  // Click handler for the blue square button instead of key combinations
+  adminTriggerBtn.addEventListener("click", async () => {
+    const codeInput = prompt("Enter Admin Code:");
+    if (!codeInput) return;
 
-      try {
-        const response = await fetch("admincodes.txt");
-        if (!response.ok) {
-          alert("Error loading verification server.");
-          return;
-        }
-        const text = await response.text();
-        const validCodes = text.split(/\r?\n/).map(c => c.trim()).filter(Boolean);
-
-        if (validCodes.includes(codeInput.trim())) {
-          localStorage.setItem("admin_code", codeInput.trim());
-          isAdmin = true;
-          alert("Admin status unlocked successfully!");
-          renderAllMessages();
-        } else {
-          alert("Invalid admin code.");
-        }
-      } catch (err) {
-        alert("Verification failed.");
+    try {
+      const response = await fetch("admincodes.txt");
+      if (!response.ok) {
+        alert("Error loading verification server.");
+        return;
       }
+      const text = await response.text();
+      const validCodes = text.split(/\r?\n/).map(c => c.trim()).filter(Boolean);
+
+      if (validCodes.includes(codeInput.trim())) {
+        localStorage.setItem("admin_code", codeInput.trim());
+        isAdmin = true;
+        alert("Admin status unlocked successfully!");
+        renderAllMessages();
+      } else {
+        alert("Invalid admin code.");
+      }
+    } catch (err) {
+      alert("Verification failed.");
     }
   });
 
-  // Track state memory for live structural refreshes
   let messageSnapshots = {};
 
   function renderAllMessages() {
@@ -437,7 +453,6 @@
 
     content.appendChild(metaEl);
 
-    // Reply display
     if (data.replyUser && data.replyText) {
       const replyBox = document.createElement("div");
       replyBox.className = "replyPreview";
@@ -448,7 +463,6 @@
       content.appendChild(replyBox);
     }
 
-    // File display
     if (data.fileBase64) {
       const type = data.fileType || "";
 
@@ -493,11 +507,9 @@
       content.appendChild(textEl);
     }
 
-    // Interactive controls container
     const actionRow = document.createElement("div");
     actionRow.className = "action-row";
 
-    // Standard Reply button
     const replyBtn = document.createElement("div");
     replyBtn.className = "replyBtn";
     replyBtn.textContent = "Reply";
@@ -506,7 +518,6 @@
     };
     actionRow.appendChild(replyBtn);
 
-    // Contextual Admin Features
     if (isAdmin) {
       const resetPfpBtn = document.createElement("div");
       resetPfpBtn.className = "adminBtn";
@@ -542,7 +553,6 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  // --- Sync database adjustments dynamically ---
   onChildAdded(messagesRef, (snapshot) => {
     const data = snapshot.val();
     const key = snapshot.key;
