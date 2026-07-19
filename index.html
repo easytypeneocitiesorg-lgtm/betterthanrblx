@@ -82,13 +82,20 @@
     font-size: 13px;
     color: #9ca3af;
   }
-  .replyBtn {
+  .action-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 4px;
+  }
+  .replyBtn, .adminBtn {
     font-size: 12px;
     color: #93c5fd;
     cursor: pointer;
-    margin-top: 4px;
   }
-  .replyBtn:hover {
+  .adminBtn {
+    color: #ef4444;
+  }
+  .replyBtn:hover, .adminBtn:hover {
     text-decoration: underline;
   }
   form {
@@ -212,7 +219,11 @@
     ref,
     push,
     onChildAdded,
+    onChildChanged,
+    onChildRemoved,
     set,
+    update,
+    remove,
     onValue
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
@@ -243,6 +254,7 @@
   let cooldown = false;
   let typingTimeout = null;
   let replyTo = null;
+  let isAdmin = false;
 
   const defaultPfp = "https://i.imgur.com/4ZQZ4ZQ.png";
   let pfp = localStorage.getItem("chat_pfp") || defaultPfp;
@@ -251,6 +263,74 @@
   if (Notification.permission !== "granted") {
     Notification.requestPermission();
   }
+
+  // --- Admin Logic System ---
+
+  async function checkAdminStatusOnLoad() {
+    const savedCode = localStorage.getItem("admin_code");
+    if (!savedCode) return;
+
+    try {
+      const response = await fetch("admincodes.txt");
+      if (!response.ok) throw new Error("Could not check codes file");
+      const text = await response.text();
+      const validCodes = text.split(/\r?\n/).map(c => c.trim()).filter(Boolean);
+
+      if (validCodes.includes(savedCode)) {
+        isAdmin = true;
+        // Re-render messages to show admin panels if verified
+        renderAllMessages();
+      } else {
+        localStorage.removeItem("admin_code");
+        isAdmin = false;
+        alert("Your admin code has been deleted either because your powers have been revoked or because of an error. If you believe this is an error please contact the owner at https://discord.gg/wZNGASwP3Y");
+        renderAllMessages();
+      }
+    } catch (err) {
+      console.error("Error verifying admin state:", err);
+    }
+  }
+
+  window.addEventListener("keydown", async (e) => {
+    if (e.altKey && e.shiftKey && e.key === "1") {
+      e.preventDefault();
+      const codeInput = prompt("Enter Admin Code:");
+      if (!codeInput) return;
+
+      try {
+        const response = await fetch("admincodes.txt");
+        if (!response.ok) {
+          alert("Error loading verification server.");
+          return;
+        }
+        const text = await response.text();
+        const validCodes = text.split(/\r?\n/).map(c => c.trim()).filter(Boolean);
+
+        if (validCodes.includes(codeInput.trim())) {
+          localStorage.setItem("admin_code", codeInput.trim());
+          isAdmin = true;
+          alert("Admin status unlocked successfully!");
+          renderAllMessages();
+        } else {
+          alert("Invalid admin code.");
+        }
+      } catch (err) {
+        alert("Verification failed.");
+      }
+    }
+  });
+
+  // Track state memory for live structural refreshes
+  let messageSnapshots = {};
+
+  function renderAllMessages() {
+    messagesEl.innerHTML = "";
+    Object.keys(messageSnapshots).forEach(key => {
+      displayMessage(key, messageSnapshots[key]);
+    });
+  }
+
+  // --- End Admin Logic System ---
 
   function loadUsername() {
     const stored = localStorage.getItem("chat_username");
@@ -275,6 +355,7 @@
   });
 
   loadUsername();
+  checkAdminStatusOnLoad();
 
   changeUsernameBtn.addEventListener("click", () => {
     usernameModal.style.display = "flex";
@@ -302,11 +383,11 @@
 
   // Typing indicator
   messageInput.addEventListener("input", () => {
-    set(ref(db, "typing/" + username), true);
+    if (username) set(ref(db, "typing/" + username), true);
 
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => {
-      set(ref(db, "typing/" + username), false);
+      if (username) set(ref(db, "typing/" + username), false);
     }, 1000);
   });
 
@@ -336,11 +417,10 @@
     replyContainer.innerHTML = "";
   }
 
-  onChildAdded(messagesRef, (snapshot) => {
-    const data = snapshot.val();
-
+  function displayMessage(key, data) {
     const msgEl = document.createElement("div");
     msgEl.className = "message";
+    msgEl.setAttribute("data-key", key);
 
     const pfpMsg = document.createElement("div");
     pfpMsg.className = "pfpMsg";
@@ -413,20 +493,61 @@
       content.appendChild(textEl);
     }
 
-    // Reply button
+    // Interactive controls container
+    const actionRow = document.createElement("div");
+    actionRow.className = "action-row";
+
+    // Standard Reply button
     const replyBtn = document.createElement("div");
     replyBtn.className = "replyBtn";
     replyBtn.textContent = "Reply";
     replyBtn.onclick = () => {
       showReplyPreview(data.username, data.text || data.fileName || "");
     };
-    content.appendChild(replyBtn);
+    actionRow.appendChild(replyBtn);
 
+    // Contextual Admin Features
+    if (isAdmin) {
+      const resetPfpBtn = document.createElement("div");
+      resetPfpBtn.className = "adminBtn";
+      resetPfpBtn.textContent = "Reset PFP";
+      resetPfpBtn.onclick = () => {
+        update(ref(db, `messages/${key}`), { pfp: defaultPfp });
+      };
+
+      const resetUserBtn = document.createElement("div");
+      resetUserBtn.className = "adminBtn";
+      resetUserBtn.textContent = "Reset Username";
+      resetUserBtn.onclick = () => {
+        update(ref(db, `messages/${key}`), { username: "username_deleted" });
+      };
+
+      const deleteBtn = document.createElement("div");
+      deleteBtn.className = "adminBtn";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.onclick = () => {
+        remove(ref(db, `messages/${key}`));
+      };
+
+      actionRow.appendChild(resetPfpBtn);
+      actionRow.appendChild(resetUserBtn);
+      actionRow.appendChild(deleteBtn);
+    }
+
+    content.appendChild(actionRow);
     msgEl.appendChild(pfpMsg);
     msgEl.appendChild(content);
 
     messagesEl.appendChild(msgEl);
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  // --- Sync database adjustments dynamically ---
+  onChildAdded(messagesRef, (snapshot) => {
+    const data = snapshot.val();
+    const key = snapshot.key;
+    messageSnapshots[key] = data;
+    displayMessage(key, data);
 
     if (data.username !== username && Notification.permission === "granted") {
       let body = data.text || "";
@@ -441,6 +562,18 @@
       }
       new Notification(`${data.username}`, { body });
     }
+  });
+
+  onChildChanged(messagesRef, (snapshot) => {
+    const key = snapshot.key;
+    messageSnapshots[key] = snapshot.val();
+    renderAllMessages();
+  });
+
+  onChildRemoved(messagesRef, (snapshot) => {
+    const key = snapshot.key;
+    delete messageSnapshots[key];
+    renderAllMessages();
   });
 
   messageForm.addEventListener("submit", (e) => {
