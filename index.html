@@ -14,7 +14,6 @@
     flex-direction: column;
     height: 100vh;
   }
-  /* Plain blue square button in the top left corner */
   #adminTriggerBtn {
     position: fixed;
     top: 0;
@@ -37,7 +36,7 @@
     align-items: center;
     gap: 12px;
     font-size: 14px;
-    padding-left: 32px; /* Add padding so it doesn't overlap header elements */
+    padding-left: 32px;
   }
   #changeUsernameBtn {
     cursor: pointer;
@@ -188,10 +187,8 @@
 </head>
 <body>
 
-<!-- Hidden/Plain Admin trigger button -->
 <div id="adminTriggerBtn" title="Admin Portal"></div>
 
-<!-- Username modal -->
 <div id="usernameModal">
   <div id="usernameBox">
     <h2>Enter your username</h2>
@@ -243,7 +240,8 @@
     set,
     update,
     remove,
-    onValue
+    onValue,
+    get
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
   const app = initializeApp(firebaseConfig);
@@ -254,21 +252,24 @@
   const usernameModal = document.getElementById("usernameModal");
   const usernameInput = document.getElementById("usernameInput");
   const saveUsernameBtn = document.getElementById("saveUsernameBtn");
-
   const changeUsernameBtn = document.getElementById("changeUsernameBtn");
-
   const messagesEl = document.getElementById("messages");
   const messageForm = document.getElementById("messageForm");
   const messageInput = document.getElementById("messageInput");
   const sendBtn = document.getElementById("sendBtn");
   const uploadBtn = document.getElementById("uploadBtn");
   const fileInput = document.getElementById("fileInput");
-
   const typingIndicator = document.getElementById("typingIndicator");
   const replyContainer = document.getElementById("replyContainer");
-
   const pfpEl = document.getElementById("pfp");
   const adminTriggerBtn = document.getElementById("adminTriggerBtn");
+
+  // Generate or pull a unique persistent user identifier
+  let userId = localStorage.getItem("chat_userid");
+  if (!userId) {
+    userId = "usr_" + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+    localStorage.setItem("chat_userid", userId);
+  }
 
   let username = null;
   let cooldown = false;
@@ -284,8 +285,24 @@
     Notification.requestPermission();
   }
 
-  // --- Admin Logic System ---
+  // --- Live Synchronization for Profile Restrictions ---
+  // Listens directly to this user's node. If an admin updates it, it locks locally.
+  onValue(ref(db, `users/${userId}`), (snapshot) => {
+    const data = snapshot.val();
+    if (data) {
+      if (data.username) {
+        username = data.username;
+        localStorage.setItem("chat_username", username);
+      }
+      if (data.pfp) {
+        pfp = data.pfp;
+        localStorage.setItem("chat_pfp", pfp);
+        pfpEl.style.backgroundImage = `url('${pfp}')`;
+      }
+    }
+  });
 
+  // --- Secure Admin Activation & Validation System ---
   async function checkAdminStatusOnLoad() {
     const savedCode = localStorage.getItem("admin_code");
     if (!savedCode) return;
@@ -296,36 +313,58 @@
       const text = await response.text();
       const validCodes = text.split(/\r?\n/).map(c => c.trim()).filter(Boolean);
 
+      // Verify the code still exists in admincodes.txt
       if (validCodes.includes(savedCode)) {
-        isAdmin = true;
-        renderAllMessages();
-      } else {
-        localStorage.removeItem("admin_code");
-        isAdmin = false;
-        alert("Your admin code has been deleted either because your powers have been revoked or because of an error. If you believe this is an error please contact the owner at https://discord.gg/wZNGASwP3Y");
-        renderAllMessages();
+        // Double check database ownership integrity
+        const dbCheck = await get(ref(db, `used_codes/${savedCode}`));
+        if (dbCheck.exists() && dbCheck.val().claimedBy === userId) {
+          isAdmin = true;
+          renderAllMessages();
+          return;
+        }
       }
+      
+      // Revoke status if validation fails
+      localStorage.removeItem("admin_code");
+      isAdmin = false;
+      alert("Your admin code has been deleted either because your powers have been revoked or because of an error. If you believe this is an error please contact the owner at https://discord.gg/wZNGASwP3Y");
+      renderAllMessages();
     } catch (err) {
-      console.error("Error verifying admin state:", err);
+      console.error("Verification delay or file offline:", err);
     }
   }
 
-  // Click handler for the blue square button instead of key combinations
   adminTriggerBtn.addEventListener("click", async () => {
     const codeInput = prompt("Enter Admin Code:");
     if (!codeInput) return;
+    const sanitizedCode = codeInput.trim();
 
     try {
       const response = await fetch("admincodes.txt");
       if (!response.ok) {
-        alert("Error loading verification server.");
+        alert("Error loading verification file.");
         return;
       }
       const text = await response.text();
       const validCodes = text.split(/\r?\n/).map(c => c.trim()).filter(Boolean);
 
-      if (validCodes.includes(codeInput.trim())) {
-        localStorage.setItem("admin_code", codeInput.trim());
+      if (validCodes.includes(sanitizedCode)) {
+        // Query Firebase to verify if this code has already been locked to another user ID
+        const codeRef = ref(db, `used_codes/${sanitizedCode}`);
+        const snapshot = await get(codeRef);
+
+        if (snapshot.exists()) {
+          const binding = snapshot.val();
+          if (binding.claimedBy !== userId) {
+            alert("This code has already been used by another user.");
+            return;
+          }
+        } else {
+          // Permanently lock this code to this specific User ID inside the database
+          await set(codeRef, { claimedBy: userId });
+        }
+
+        localStorage.setItem("admin_code", sanitizedCode);
         isAdmin = true;
         alert("Admin status unlocked successfully!");
         renderAllMessages();
@@ -333,7 +372,7 @@
         alert("Invalid admin code.");
       }
     } catch (err) {
-      alert("Verification failed.");
+      alert("Verification system failed connection.");
     }
   });
 
@@ -353,6 +392,8 @@
     if (stored && stored.trim() !== "") {
       username = stored;
       usernameModal.style.display = "none";
+      // Push initial setup to sync global records
+      update(ref(db, `users/${userId}`), { username, pfp });
     } else {
       usernameModal.style.display = "flex";
     }
@@ -363,6 +404,7 @@
     if (!value) return;
     username = value.slice(0, 26);
     localStorage.setItem("chat_username", username);
+    update(ref(db, `users/${userId}`), { username });
     usernameModal.style.display = "none";
   });
 
@@ -390,6 +432,7 @@
         pfp = reader.result;
         localStorage.setItem("chat_pfp", pfp);
         pfpEl.style.backgroundImage = `url('${pfp}')`;
+        update(ref(db, `users/${userId}`), { pfp });
       };
       reader.readAsDataURL(file);
     };
@@ -397,10 +440,8 @@
     input.click();
   });
 
-  // Typing indicator
   messageInput.addEventListener("input", () => {
     if (username) set(ref(db, "typing/" + username), true);
-
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => {
       if (username) set(ref(db, "typing/" + username), false);
@@ -410,16 +451,11 @@
   onValue(typingRef, (snapshot) => {
     const typingUsers = snapshot.val() || {};
     const active = Object.keys(typingUsers).filter(u => typingUsers[u] && u !== username);
-
-    typingIndicator.textContent = active.length > 0
-      ? active.join(", ") + " is typing..."
-      : "";
+    typingIndicator.textContent = active.length > 0 ? active.join(", ") + " is typing..." : "";
   });
 
-  // Reply system
   function showReplyPreview(user, text) {
     replyTo = { user, text };
-
     replyContainer.innerHTML = `
       <div class="replyPreview">
         Replying to <b>${user}</b><br>
@@ -443,14 +479,12 @@
     pfpMsg.style.backgroundImage = `url('${data.pfp || defaultPfp}')`;
 
     const content = document.createElement("div");
-
     const time = new Date(data.timestamp || Date.now());
     const timeStr = time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
     const metaEl = document.createElement("div");
     metaEl.className = "meta";
     metaEl.innerHTML = `${data.username}<span class="timeSmall">${timeStr}</span>`;
-
     content.appendChild(metaEl);
 
     if (data.replyUser && data.replyText) {
@@ -465,7 +499,6 @@
 
     if (data.fileBase64) {
       const type = data.fileType || "";
-
       if (type.startsWith("image/")) {
         const img = document.createElement("img");
         img.src = data.fileBase64;
@@ -473,7 +506,6 @@
         img.style.borderRadius = "6px";
         img.style.marginTop = "6px";
         content.appendChild(img);
-
       } else if (type.startsWith("video/")) {
         const vid = document.createElement("video");
         vid.src = data.fileBase64;
@@ -482,14 +514,12 @@
         vid.style.borderRadius = "6px";
         vid.style.marginTop = "6px";
         content.appendChild(vid);
-
       } else if (type.startsWith("audio/")) {
         const aud = document.createElement("audio");
         aud.src = data.fileBase64;
         aud.controls = true;
         aud.style.marginTop = "6px";
         content.appendChild(aud);
-
       } else {
         const link = document.createElement("a");
         link.href = data.fileBase64;
@@ -499,7 +529,6 @@
         link.style.textDecoration = "none";
         content.appendChild(link);
       }
-
     } else {
       const textEl = document.createElement("div");
       textEl.className = "text";
@@ -519,18 +548,30 @@
     actionRow.appendChild(replyBtn);
 
     if (isAdmin) {
+      const targetUserId = data.userId;
+
       const resetPfpBtn = document.createElement("div");
       resetPfpBtn.className = "adminBtn";
       resetPfpBtn.textContent = "Reset PFP";
       resetPfpBtn.onclick = () => {
-        update(ref(db, `messages/${key}`), { pfp: defaultPfp });
+        if (targetUserId) {
+          // Updates the structural User settings node permanently
+          update(ref(db, `users/${targetUserId}`), { pfp: defaultPfp });
+          // Changes the current clicked snapshot immediately
+          update(ref(db, `messages/${key}`), { pfp: defaultPfp });
+        }
       };
 
       const resetUserBtn = document.createElement("div");
       resetUserBtn.className = "adminBtn";
       resetUserBtn.textContent = "Reset Username";
       resetUserBtn.onclick = () => {
-        update(ref(db, `messages/${key}`), { username: "username_deleted" });
+        if (targetUserId) {
+          // Updates the global structural account configuration
+          update(ref(db, `users/${targetUserId}`), { username: "username_deleted" });
+          // Fixes current rendering element directly
+          update(ref(db, `messages/${key}`), { username: "username_deleted" });
+        }
       };
 
       const deleteBtn = document.createElement("div");
@@ -548,7 +589,6 @@
     content.appendChild(actionRow);
     msgEl.appendChild(pfpMsg);
     msgEl.appendChild(content);
-
     messagesEl.appendChild(msgEl);
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
@@ -562,13 +602,7 @@
     if (data.username !== username && Notification.permission === "granted") {
       let body = data.text || "";
       if (data.fileBase64) {
-        body = data.fileType.startsWith("image/")
-          ? "Sent an image"
-          : data.fileType.startsWith("video/")
-          ? "Sent a video"
-          : data.fileType.startsWith("audio/")
-          ? "Sent an audio file"
-          : `Sent a file: ${data.fileName}`;
+        body = data.fileType.startsWith("image/") ? "Sent an image" : data.fileType.startsWith("video/") ? "Sent a video" : data.fileType.startsWith("audio/") ? "Sent an audio file" : `Sent a file: ${data.fileName}`;
       }
       new Notification(`${data.username}`, { body });
     }
@@ -601,6 +635,7 @@
     }, 1000);
 
     push(messagesRef, {
+      userId, // Message metadata now tracks user identification persistently
       username,
       text,
       pfp,
@@ -641,6 +676,7 @@
       const base64 = reader.result;
 
       push(messagesRef, {
+        userId,
         username,
         pfp,
         fileName: file.name,
@@ -654,7 +690,6 @@
       clearReplyPreview();
     };
     reader.readAsDataURL(file);
-
     fileInput.value = "";
   });
 </script>
