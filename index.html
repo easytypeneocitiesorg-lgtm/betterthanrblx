@@ -248,23 +248,9 @@
   const db = getDatabase(app);
   const messagesRef = ref(db, "messages");
   const typingRef = ref(db, "typing");
+  const usersRef = ref(db, "users");
 
-  const usernameModal = document.getElementById("usernameModal");
-  const usernameInput = document.getElementById("usernameInput");
-  const saveUsernameBtn = document.getElementById("saveUsernameBtn");
-  const changeUsernameBtn = document.getElementById("changeUsernameBtn");
-  const messagesEl = document.getElementById("messages");
-  const messageForm = document.getElementById("messageForm");
-  const messageInput = document.getElementById("messageInput");
-  const sendBtn = document.getElementById("sendBtn");
-  const uploadBtn = document.getElementById("uploadBtn");
-  const fileInput = document.getElementById("fileInput");
-  const typingIndicator = document.getElementById("typingIndicator");
-  const replyContainer = document.getElementById("replyContainer");
-  const pfpEl = document.getElementById("pfp");
-  const adminTriggerBtn = document.getElementById("adminTriggerBtn");
-
-  // Generate or pull a unique persistent user identifier
+  // Handle local persistent identification
   let userId = localStorage.getItem("chat_userid");
   if (!userId) {
     userId = "usr_" + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
@@ -285,24 +271,32 @@
     Notification.requestPermission();
   }
 
-  // --- Live Synchronization for Profile Restrictions ---
-  // Listens directly to this user's node. If an admin updates it, it locks locally.
-  onValue(ref(db, `users/${userId}`), (snapshot) => {
-    const data = snapshot.val();
-    if (data) {
-      if (data.username) {
-        username = data.username;
+  // State memories
+  let messageSnapshots = {};
+  let userProfiles = {};
+
+  // --- Dynamic Live Profile Sync ---
+  // Listens globally to all user changes. When an admin updates a user, it automatically updates everywhere.
+  onValue(usersRef, (snapshot) => {
+    userProfiles = snapshot.val() || {};
+    
+    // Sync current client profile if it was targeted by an admin override
+    if (userProfiles[userId]) {
+      if (userProfiles[userId].username) {
+        username = userProfiles[userId].username;
         localStorage.setItem("chat_username", username);
       }
-      if (data.pfp) {
-        pfp = data.pfp;
+      if (userProfiles[userId].pfp) {
+        pfp = userProfiles[userId].pfp;
         localStorage.setItem("chat_pfp", pfp);
         pfpEl.style.backgroundImage = `url('${pfp}')`;
       }
     }
+    // Re-render UI elements cleanly using updated data coordinates
+    renderAllMessages();
   });
 
-  // --- Secure Admin Activation & Validation System ---
+  // --- Secure Single-Use Admin Verification Locks ---
   async function checkAdminStatusOnLoad() {
     const savedCode = localStorage.getItem("admin_code");
     if (!savedCode) return;
@@ -313,10 +307,11 @@
       const text = await response.text();
       const validCodes = text.split(/\r?\n/).map(c => c.trim()).filter(Boolean);
 
-      // Verify the code still exists in admincodes.txt
       if (validCodes.includes(savedCode)) {
-        // Double check database ownership integrity
-        const dbCheck = await get(ref(db, `used_codes/${savedCode}`));
+        // Sanitize string characters for deep directory calls safely
+        const safePathCode = btoa(savedCode).replace(/=/g, "");
+        const dbCheck = await get(ref(db, `used_codes/${safePathCode}`));
+        
         if (dbCheck.exists() && dbCheck.val().claimedBy === userId) {
           isAdmin = true;
           renderAllMessages();
@@ -324,13 +319,12 @@
         }
       }
       
-      // Revoke status if validation fails
       localStorage.removeItem("admin_code");
       isAdmin = false;
       alert("Your admin code has been deleted either because your powers have been revoked or because of an error. If you believe this is an error please contact the owner at https://discord.gg/wZNGASwP3Y");
       renderAllMessages();
     } catch (err) {
-      console.error("Verification delay or file offline:", err);
+      console.error("Verification verification issue:", err);
     }
   }
 
@@ -349,8 +343,9 @@
       const validCodes = text.split(/\r?\n/).map(c => c.trim()).filter(Boolean);
 
       if (validCodes.includes(sanitizedCode)) {
-        // Query Firebase to verify if this code has already been locked to another user ID
-        const codeRef = ref(db, `used_codes/${sanitizedCode}`);
+        // Convert the code to a safe database key string to handle special characters cleanly
+        const safePathCode = btoa(sanitizedCode).replace(/=/g, "");
+        const codeRef = ref(db, `used_codes/${safePathCode}`);
         const snapshot = await get(codeRef);
 
         if (snapshot.exists()) {
@@ -360,7 +355,7 @@
             return;
           }
         } else {
-          // Permanently lock this code to this specific User ID inside the database
+          // Permanently assign and bind this code item context to this specific User ID structure
           await set(codeRef, { claimedBy: userId });
         }
 
@@ -376,8 +371,6 @@
     }
   });
 
-  let messageSnapshots = {};
-
   function renderAllMessages() {
     messagesEl.innerHTML = "";
     Object.keys(messageSnapshots).forEach(key => {
@@ -385,14 +378,11 @@
     });
   }
 
-  // --- End Admin Logic System ---
-
   function loadUsername() {
     const stored = localStorage.getItem("chat_username");
     if (stored && stored.trim() !== "") {
       username = stored;
       usernameModal.style.display = "none";
-      // Push initial setup to sync global records
       update(ref(db, `users/${userId}`), { username, pfp });
     } else {
       usernameModal.style.display = "flex";
@@ -474,9 +464,12 @@
     msgEl.className = "message";
     msgEl.setAttribute("data-key", key);
 
+    // DYNAMIC MATCHING: Always pull current display information directly from our live profiles mapping directory
+    const currentProfile = userProfiles[data.userId] || { username: data.username, pfp: data.pfp };
+
     const pfpMsg = document.createElement("div");
     pfpMsg.className = "pfpMsg";
-    pfpMsg.style.backgroundImage = `url('${data.pfp || defaultPfp}')`;
+    pfpMsg.style.backgroundImage = `url('${currentProfile.pfp || defaultPfp}')`;
 
     const content = document.createElement("div");
     const time = new Date(data.timestamp || Date.now());
@@ -484,7 +477,7 @@
 
     const metaEl = document.createElement("div");
     metaEl.className = "meta";
-    metaEl.innerHTML = `${data.username}<span class="timeSmall">${timeStr}</span>`;
+    metaEl.innerHTML = `${currentProfile.username}<span class="timeSmall">${timeStr}</span>`;
     content.appendChild(metaEl);
 
     if (data.replyUser && data.replyText) {
@@ -543,7 +536,7 @@
     replyBtn.className = "replyBtn";
     replyBtn.textContent = "Reply";
     replyBtn.onclick = () => {
-      showReplyPreview(data.username, data.text || data.fileName || "");
+      showReplyPreview(currentProfile.username, data.text || data.fileName || "");
     };
     actionRow.appendChild(replyBtn);
 
@@ -555,10 +548,7 @@
       resetPfpBtn.textContent = "Reset PFP";
       resetPfpBtn.onclick = () => {
         if (targetUserId) {
-          // Updates the structural User settings node permanently
           update(ref(db, `users/${targetUserId}`), { pfp: defaultPfp });
-          // Changes the current clicked snapshot immediately
-          update(ref(db, `messages/${key}`), { pfp: defaultPfp });
         }
       };
 
@@ -567,10 +557,7 @@
       resetUserBtn.textContent = "Reset Username";
       resetUserBtn.onclick = () => {
         if (targetUserId) {
-          // Updates the global structural account configuration
           update(ref(db, `users/${targetUserId}`), { username: "username_deleted" });
-          // Fixes current rendering element directly
-          update(ref(db, `messages/${key}`), { username: "username_deleted" });
         }
       };
 
@@ -599,12 +586,13 @@
     messageSnapshots[key] = data;
     displayMessage(key, data);
 
+    const currentProfile = userProfiles[data.userId] || { username: data.username };
     if (data.username !== username && Notification.permission === "granted") {
       let body = data.text || "";
       if (data.fileBase64) {
         body = data.fileType.startsWith("image/") ? "Sent an image" : data.fileType.startsWith("video/") ? "Sent a video" : data.fileType.startsWith("audio/") ? "Sent an audio file" : `Sent a file: ${data.fileName}`;
       }
-      new Notification(`${data.username}`, { body });
+      new Notification(`${currentProfile.username}`, { body });
     }
   });
 
@@ -635,7 +623,7 @@
     }, 1000);
 
     push(messagesRef, {
-      userId, // Message metadata now tracks user identification persistently
+      userId,
       username,
       text,
       pfp,
