@@ -244,6 +244,26 @@
   let typingTimeout = null;
   let replyTo = null;
 
+  function escapeHTML(str) {
+    return String(str)
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;")
+      .replace(/'/g,"&#39;");
+  }
+
+  function formatUsername(username) {
+    let safe=escapeHTML(username);
+    safe=safe.replace(/&lt;b&gt;/gi,"<b>").replace(/&lt;\/b&gt;/gi,"</b>");
+    safe=safe.replace(/&lt;strong&gt;/gi,"<strong>").replace(/&lt;\/strong&gt;/gi,"</strong>");
+    safe=safe.replace(/&lt;span\s+style=&quot;color:\s*([#a-zA-Z0-9(),.%\s-]+)&quot;&gt;/gi,
+      (_,c)=>`<span style="color:${c}">`);
+    safe=safe.replace(/&lt;\/span&gt;/gi,"</span>");
+    return safe;
+  }
+
+
   const defaultPfp = "https://i.imgur.com/4ZQZ4ZQ.png";
   let pfp = localStorage.getItem("chat_pfp") || defaultPfp;
   pfpEl.style.backgroundImage = `url('${pfp}')`;
@@ -325,7 +345,7 @@
 
     replyContainer.innerHTML = `
       <div class="replyPreview">
-        Replying to <b>${user}</b><br>
+        Replying to ${formatUsername(user)}<br>
         <span class="replyText">> ${text}</span>
       </div>
     `;
@@ -353,7 +373,7 @@
 
     const metaEl = document.createElement("div");
     metaEl.className = "meta";
-    metaEl.innerHTML = `${data.username}<span class="timeSmall">${timeStr}</span>`;
+    metaEl.innerHTML = `${formatUsername(data.username)}<span class="timeSmall">${timeStr}</span>`;
 
     content.appendChild(metaEl);
 
@@ -362,7 +382,7 @@
       const replyBox = document.createElement("div");
       replyBox.className = "replyPreview";
       replyBox.innerHTML = `
-        Replying to <b>${data.replyUser}</b><br>
+        Replying to ${formatUsername(data.replyUser)}<br>
         <span class="replyText">> ${data.replyText}</span>
       `;
       content.appendChild(replyBox);
