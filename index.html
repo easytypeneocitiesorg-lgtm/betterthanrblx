@@ -170,7 +170,7 @@
   <div id="usernameBox">
     <h2>Enter your username</h2>
     <label for="usernameInput">Username (max 26 chars)</label>
-    <input id="usernameInput" type="text" maxlength="100" />
+    <input id="usernameInput" type="text" maxlength="26" />
     <button id="saveUsernameBtn">Save</button>
   </div>
 </div>
@@ -243,26 +243,6 @@
   let cooldown = false;
   let typingTimeout = null;
   let replyTo = null;
-
-  function escapeHTML(str) {
-    return String(str)
-      .replace(/&/g,"&amp;")
-      .replace(/</g,"&lt;")
-      .replace(/>/g,"&gt;")
-      .replace(/"/g,"&quot;")
-      .replace(/'/g,"&#39;");
-  }
-
-  function formatUsername(username) {
-    let safe=escapeHTML(username);
-    safe=safe.replace(/&lt;b&gt;/gi,"<b>").replace(/&lt;\/b&gt;/gi,"</b>");
-    safe=safe.replace(/&lt;strong&gt;/gi,"<strong>").replace(/&lt;\/strong&gt;/gi,"</strong>");
-    safe=safe.replace(/&lt;span\s+style=&quot;color:\s*([#a-zA-Z0-9(),.%\s-]+)&quot;&gt;/gi,
-      (_,c)=>`<span style="color:${c}">`);
-    safe=safe.replace(/&lt;\/span&gt;/gi,"</span>");
-    return safe;
-  }
-
 
   const defaultPfp = "https://i.imgur.com/4ZQZ4ZQ.png";
   let pfp = localStorage.getItem("chat_pfp") || defaultPfp;
@@ -343,12 +323,16 @@
   function showReplyPreview(user, text) {
     replyTo = { user, text };
 
-    replyContainer.innerHTML = `
-      <div class="replyPreview">
-        Replying to ${formatUsername(user)}<br>
-        <span class="replyText">> ${text}</span>
-      </div>
-    `;
+    replyContainer.innerHTML="";
+    const preview=document.createElement("div");
+    preview.className="replyPreview";
+    const title=document.createElement("div");
+    title.textContent=`Replying to ${user}`;
+    const body=document.createElement("span");
+    body.className="replyText";
+    body.textContent=`> ${text}`;
+    preview.append(title,document.createElement("br"),body);
+    replyContainer.appendChild(preview);
   }
 
   function clearReplyPreview() {
@@ -373,7 +357,12 @@
 
     const metaEl = document.createElement("div");
     metaEl.className = "meta";
-    metaEl.innerHTML = `${formatUsername(data.username)}<span class="timeSmall">${timeStr}</span>`;
+    metaEl.textContent = data.username;
+
+    const timeSpan = document.createElement("span");
+    timeSpan.className="timeSmall";
+    timeSpan.textContent=timeStr;
+    metaEl.appendChild(timeSpan);
 
     content.appendChild(metaEl);
 
@@ -381,10 +370,12 @@
     if (data.replyUser && data.replyText) {
       const replyBox = document.createElement("div");
       replyBox.className = "replyPreview";
-      replyBox.innerHTML = `
-        Replying to ${formatUsername(data.replyUser)}<br>
-        <span class="replyText">> ${data.replyText}</span>
-      `;
+      const title=document.createElement("div");
+      title.textContent=`Replying to ${data.replyUser}`;
+      const body=document.createElement("span");
+      body.className="replyText";
+      body.textContent=`> ${data.replyText}`;
+      replyBox.append(title,document.createElement("br"),body);
       content.appendChild(replyBox);
     }
 
